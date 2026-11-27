@@ -555,11 +555,22 @@ new MutationObserver(fitPicture).observe(canvas,{attributes:true,attributeFilter
 fitPicture();
 const gameFiles = {"data":["data-f9c50d6795fc0968.bin","data-c6d88a710ba589fc.bin","data-625d6368c0e559dc.bin","data-deab1be8bd19708c.bin","data-11e87d80de715907.bin","data-8f2b396b6f270ca2.bin","data-0da68ba8f1335943.bin","data-3c85fcd8b28e4f53.bin","data-aa9ec18138d2ef97.bin"],"wasm":["wasm-39df81b8457407e6.bin"]};
 async function unpack(id) {
-  const chunks = await Promise.all(gameFiles[id].map(async file => {
-    const response = await fetch(file);
-    if (!response.ok) throw Error('游戏资源加载失败 ' + response.status);
-    return response.blob();
-  }));
+  const chunks = [];
+  for (const file of gameFiles[id]) {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const response = await fetch(file);
+        if (!response.ok) throw Error('游戏资源加载失败 ' + response.status);
+        chunks.push(await response.blob());
+        break;
+      } catch (error) {
+        if (attempt >= 4) throw error;
+        by('status').textContent = '连接中断，正在重试下载…';
+        await new Promise(resolve => setTimeout(resolve, attempt * 1000));
+      }
+    }
+    if (id === 'data') by('status').textContent = '正在加载游戏数据 ' + chunks.length + ' / ' + gameFiles[id].length;
+  }
   const stream = new Blob(chunks).stream().pipeThrough(new DecompressionStream('gzip'));
   return new Response(stream).arrayBuffer();
 }
