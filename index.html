@@ -553,27 +553,81 @@ function fitPicture(){
 }
 new MutationObserver(fitPicture).observe(canvas,{attributes:true,attributeFilter:['width','height']});
 fitPicture();
-const gameFiles = {"data":["data-f9c50d6795fc0968.bin","data-c6d88a710ba589fc.bin","data-625d6368c0e559dc.bin","data-deab1be8bd19708c.bin","data-11e87d80de715907.bin","data-8f2b396b6f270ca2.bin","data-0da68ba8f1335943.bin","data-3c85fcd8b28e4f53.bin","data-aa9ec18138d2ef97.bin"],"wasm":["wasm-39df81b8457407e6.bin"]};
-async function unpack(id) {
-  const chunks = [];
-  for (const file of gameFiles[id]) {
-    for (let attempt = 1; ; attempt++) {
-      try {
-        const response = await fetch(file);
-        if (!response.ok) throw Error('游戏资源加载失败 ' + response.status);
-        chunks.push(await response.blob());
-        break;
-      } catch (error) {
-        if (attempt >= 4) throw error;
-        by('status').textContent = '连接中断，正在重试下载…';
-        await new Promise(resolve => setTimeout(resolve, attempt * 1000));
-      }
+const gameFiles = {"data":[{"file":"data-ed7efbf826b5f684.bin","size":6291456},{"file":"data-7263dcda3281756a.bin","size":6291456},{"file":"data-85e027ed28eb9ee7.bin","size":6291456},{"file":"data-ef9e9800552c0998.bin","size":6291456},{"file":"data-da0756e69e446ebb.bin","size":6291456},{"file":"data-898f2912e3fbf210.bin","size":6291456},{"file":"data-2b275422d785ee86.bin","size":485787}],"wasm":[{"file":"wasm-39df81b8457407e6.bin","size":1884829}]};
+const gameCache = window.caches
+  ? caches.open('road-rash-game-assets-v1').catch(() => null)
+  : Promise.resolve(null);
+const loadedBytes = new Map();
+const totalBytes = Object.values(gameFiles).flat().reduce((sum, part) => sum + part.size, 0);
+let previousLabel = '';
+
+function showLoaded(file, bytes) {
+  loadedBytes.set(file, bytes);
+  const loaded = Array.from(loadedBytes.values()).reduce((a, b) => a + b, 0);
+  const label = loaded === totalBytes ? '正在启动游戏…' :
+    '正在加载 ' + (loaded / 1e6).toFixed(1) + ' / ' + (totalBytes / 1e6).toFixed(1) + ' MB';
+  if (label !== previousLabel) by('status').textContent = previousLabel = label;
+}
+
+async function readPart(part) {
+  const cache = await gameCache;
+  const url = new URL(part.file, document.baseURI).href;
+  const cached = cache && await cache.match(url).catch(() => null);
+  if (cached) {
+    const blob = await cached.blob().catch(() => null);
+    if (blob && blob.size === part.size) {
+      showLoaded(part.file, part.size);
+      return blob;
     }
-    if (id === 'data') by('status').textContent = '正在加载游戏数据 ' + chunks.length + ' / ' + gameFiles[id].length;
   }
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const response = await fetch(url, {cache: attempt ? 'reload' : 'default'});
+      if (!response.ok) throw Error('HTTP ' + response.status);
+      let blob;
+      if (response.body && response.body.getReader) {
+        const reader = response.body.getReader();
+        const buffers = [];
+        let bytes = 0;
+        for (;;) {
+          const {value, done} = await reader.read();
+          if (done) break;
+          buffers.push(value);
+          bytes += value.byteLength;
+          showLoaded(part.file, bytes);
+        }
+        blob = new Blob(buffers);
+      } else {
+        blob = await response.blob();
+      }
+      if (blob.size !== part.size) throw Error('数据下载不完整');
+      showLoaded(part.file, blob.size);
+      if (cache) await cache.put(url, new Response(blob)).catch(() => {});
+      return blob;
+    } catch (error) {
+      if (attempt >= 3) throw error;
+      showLoaded(part.file, 0);
+      by('status').textContent = '连接中断，正在重试…';
+      await new Promise(resolve => setTimeout(resolve, (attempt + 1) * 1000));
+    }
+  }
+}
+
+async function unpack(id) {
+  const parts = gameFiles[id];
+  const chunks = new Array(parts.length);
+  let next = 0;
+  async function download() {
+    while (next < parts.length) {
+      const index = next++;
+      chunks[index] = await readPart(parts[index]);
+    }
+  }
+  await Promise.all(Array.from({length: Math.min(2, parts.length)}, download));
   const stream = new Blob(chunks).stream().pipeThrough(new DecompressionStream('gzip'));
   return new Response(stream).arrayBuffer();
 }
+
 function fail(error){by('intro').hidden=false;by('tools').hidden=true;by('start').hidden=true;by('status').textContent='启动失败，请重新打开文件。'+String(error);console.error(error)}
 by('start').onclick=async()=>{
  const quality=by('quality').value;
