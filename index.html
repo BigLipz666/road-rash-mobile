@@ -33,11 +33,16 @@ nav:hover,nav:focus-within{opacity:1}nav button{font-size:14px} [hidden]{display
 .touchMode input,.touchMode textarea,.touchMode [contenteditable="true"]{-webkit-user-select:text;user-select:text;-webkit-touch-callout:default}
 .touchMode #canvas,.touchMode #touchPad,.touchMode #touchBack,.touchMode #tools button{touch-action:none}
 .touchMode #tools{display:none}
+#touchFull,#fullHint{display:none}
+.touchMode #touchFull,.touchMode #fullHint{position:absolute;z-index:9;right:max(8px,env(safe-area-inset-right));top:max(5px,env(safe-area-inset-top))}
+.touchMode #touchFull{display:block;min-width:52px;min-height:44px;padding:6px 10px;background:#141918cf;border-color:#c1c6ac80;font-size:14px;touch-action:manipulation}
+.touchMode #fullHint:not(:empty){display:block;top:calc(max(5px,env(safe-area-inset-top)) + 48px);max-width:min(310px,75%);margin:0;padding:8px 12px;border-radius:6px;background:#101312ee;color:white;font-size:14px;line-height:1.5;pointer-events:none}
 .touchMode nav button,#touchBack{background:#141918bf;color:white;border-color:#c1c6ac80;font-size:13px;min-height:36px}
 #touchBack{position:absolute;left:max(5px,env(safe-area-inset-left));top:max(4px,env(safe-area-inset-top))}
 #touchPad{position:absolute;inset:0;touch-action:none}
 #touchPad>div{position:absolute;bottom:max(var(--edge),env(safe-area-inset-bottom));display:grid;grid-template-columns:repeat(2,var(--key));gap:6px;pointer-events:none}
 .driveKeys{left:max(var(--edge),env(safe-area-inset-left))}
+#touchPad>.driveKeys{column-gap:clamp(18px,5vmin,28px);row-gap:clamp(12px,3.5vmin,20px)}
 .attackKeys{right:max(var(--edge),env(safe-area-inset-right))}
 #touchPad button{pointer-events:auto;touch-action:none;padding:0;height:var(--key);border-radius:16px;background:#11191aca;color:#fff;border:1px solid #d8ded49c;text-shadow:0 1px 2px #000;font:700 clamp(13px,3.6vmin,17px) system-ui}
 #touchPad .brake{grid-column:span 2;height:calc(var(--key)*.84)}
@@ -49,9 +54,11 @@ nav:hover,nav:focus-within{opacity:1}nav button{font-size:14px} [hidden]{display
  .touchMode .driveKeys{left:max(var(--edge),env(safe-area-inset-top))}
  .touchMode .attackKeys{right:max(var(--edge),env(safe-area-inset-bottom))}
  .touchMode #touchBack{left:max(5px,env(safe-area-inset-top));top:max(4px,env(safe-area-inset-right))}
+ .touchMode #touchFull,.touchMode #fullHint{right:max(8px,env(safe-area-inset-bottom));top:max(5px,env(safe-area-inset-right))}
+ .touchMode #fullHint:not(:empty){top:calc(max(5px,env(safe-area-inset-right)) + 48px)}
  .touchMode #touchPad>div{bottom:max(var(--edge),env(safe-area-inset-left))}
 }
-</style></head><body><main id="game"><canvas id="canvas" width="640" height="480" tabindex="0" aria-label="暴力摩托游戏画面"></canvas>
+</style><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"></head><body><main id="game"><canvas id="canvas" width="640" height="480" tabindex="0" aria-label="暴力摩托游戏画面"></canvas>
 <section id="intro"><h1>暴力摩托</h1><button id="start">开始游戏</button><label>画质 <select id="quality"><option value="hd" selected>高清 · 1280×960</option><option value="fast">优先帧率 · 640×480</option><option value="classic">经典显示</option></select></label><p id="status" role="status"></p><div class="bindings"><h2>默认键位</h2>
 <dl>
 <div class="combat"><dt>出拳</dt><dd><kbd>U</kbd></dd></div>
@@ -81,6 +88,8 @@ nav:hover,nav:focus-within{opacity:1}nav button{font-size:14px} [hidden]{display
   </div>
 </div>
 <button id="touchBack" hidden>返回</button>
+<button id="touchFull" type="button" aria-pressed="false">全屏</button>
+<p id="fullHint" role="status"></p>
 </main>
 <script id="licenses" type="text/plain">WebAssembly port: speedydevil007/road-sdl2-rash | https://github.com/speedydevil007/road-sdl2-rash
 
@@ -663,12 +672,48 @@ canvas.oncontextmenu=e=>e.preventDefault();
   instructions.textContent='点选菜单进入比赛。比赛自动加速，按住刹车减速。';
   by('intro').append(instructions);
   const pad=by('touchPad'), back=by('touchBack'), nitro=pad.querySelector('[data-key=o]');
+  const fullButton=by('touchFull'), fullHint=by('fullHint');
+  // Fullscreen the document so portrait rotation and every overlay stay together.
+  const root=document.documentElement;
+  const fullscreenElement=()=>document.fullscreenElement || document.webkitFullscreenElement;
+  function updateFullscreen(){
+    const active=Boolean(fullscreenElement());
+    fullButton.textContent=active?'退出全屏':'全屏';
+    fullButton.setAttribute('aria-pressed',String(active));
+    fullHint.textContent='';
+  }
+  let hintTimer;
+  function showFullscreenHint(){
+    const ios=/iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
+    const standalone=navigator.standalone || matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: fullscreen)').matches;
+    fullHint.textContent=standalone?'当前已从主屏幕打开，系统状态栏和手势条由设备控制。':
+      ios?'可用 Safari 打开，点「分享」→「添加到主屏幕」，再从图标启动以隐藏浏览器工具栏。':
+      '当前浏览器未允许全屏，可在系统浏览器中打开后重试。';
+    clearTimeout(hintTimer);
+    hintTimer=setTimeout(()=>{fullHint.textContent=''},8000);
+  }
+  fullButton.onclick=async()=>{
+    try{
+      if(fullscreenElement()){
+        await (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+      }else if(document.fullscreenEnabled && root.requestFullscreen){
+        await root.requestFullscreen({navigationUI:'hide'});
+      }else if(document.webkitFullscreenEnabled && root.webkitRequestFullscreen){
+        root.webkitRequestFullscreen();
+      }else{
+        showFullscreenHint();
+      }
+    }catch{showFullscreenHint()}
+    if(by('intro').hidden)canvas.focus({preventScroll:true});
+  };
+  for(const type of ['fullscreenchange','webkitfullscreenchange'])document.addEventListener(type,updateFullscreen);
+  for(const type of ['fullscreenerror','webkitfullscreenerror'])document.addEventListener(type,showFullscreenHint);
   // Buttons use pointer events so steering and attacking remain independent.
   // Cancel the browser's parallel touch gestures, including holds on empty space.
   for(const type of ['touchstart','touchmove','touchend']){
     game.addEventListener(type,event=>{
       if(event.touches.length>1)tap=null;
-      if(event.touches.length>1 || (by('intro').hidden && event.target!==back)){
+      if(event.touches.length>1 || (by('intro').hidden && event.target!==back && event.target!==fullButton)){
         if(event.cancelable)event.preventDefault();
       }
     },{capture:true,passive:false});
